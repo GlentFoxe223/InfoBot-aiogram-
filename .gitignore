@@ -1,0 +1,16 @@
+.env
+botdata.db
+.venv
+testhandler.py
+LICENSE.chromedriver
+THIRD_PARTY_NOTICES.chromedriver
+parser.log
+testparser.log
+testhandlerb.py
+parser_hardcoded.log
+bottggleb.service
+setup.py
+build
+build.tar.xz
+logs
+gitpush.sh
