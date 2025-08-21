@@ -202,7 +202,7 @@ class SpaceHandler:
                     except Exception:
                         continue
                 if out:
-                    await SpaceHandler._cache_pass[key] = (now, out)
+                    SpaceHandler._cache_pass[key] = await (now, out)
                     return out
             except Exception as e:
                 logger.bind(feature="space").warning(f"passes fail {url}: {e}")
@@ -312,7 +312,7 @@ class SpaceHandler:
 
         if now_iss:
             lat, lon, ts = now_iss
-            loc_now = SpaceHandler._fmt_local(ts, tz_name)
+            loc_now = await SpaceHandler._fmt_local(ts, tz_name)
             lines += [
                 "",
                 "🚀 <b>Сейчас МКС:</b>",
@@ -322,7 +322,7 @@ class SpaceHandler:
 
             if user_coords:
                 user_lat, user_lon = user_coords
-                det = SpaceHandler.get_iss_detailed_info()
+                det = await SpaceHandler.get_iss_detailed_info()
                 altitude = float(det.get("altitude", 408.0)) if det else 408.0
                 if det:
                     velocity = float(det.get("velocity", 27600.0))
@@ -334,11 +334,11 @@ class SpaceHandler:
                         vis_text = "на солнце" if vis == "daylight" else ("в тени Земли" if vis == "eclipsed" else "на границе дня/ночи")
                         lines.append(f"{vis_emoji} Освещение: {vis_text}")
 
-                dist = SpaceHandler.calculate_distance_to_iss(user_lat, user_lon, lat, lon, altitude)
+                dist = await SpaceHandler.calculate_distance_to_iss(user_lat, user_lon, lat, lon, altitude)
                 lines.append(f"📏 Расстояние: {dist['direct_distance']} км")
                 lines.append(f"🧭 Направление: {dist['direction']} ({dist['bearing']}°)")
 
-            country = SpaceHandler._get_country_by_coords(lat, lon)
+            country = await SpaceHandler._get_country_by_coords(lat, lon)
             if country:
                 lines.append(f"🌍 Сейчас над: {country}")
 
@@ -355,7 +355,7 @@ class SpaceHandler:
             return f"⚠️ Сервис пролетов МКС временно недоступен для города «{label}». Попробуйте позже."
 
         now_iss = self.iss_now()
-        return self.format_passes(label, passes, now_iss, tz, (lat, lon))
+        return await self.format_passes(label, passes, now_iss, tz, (lat, lon))
 
     async def get_space_report_by_coords(self, lat: float, lon: float) -> str:
         if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):

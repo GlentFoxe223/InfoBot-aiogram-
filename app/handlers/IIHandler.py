@@ -84,11 +84,11 @@ class IIHandler:
         logger.info(f"[II] models={self._models}")
 
     async def _is_blacklisted(self, model: str) -> bool:
-        until = self._blacklist.get(model)
+        until = await self._blacklist.get(model)
         if not until:
             return False
         if datetime.utcnow() >= until:
-            self._blacklist.pop(model, None)
+            await self._blacklist.pop(model, None)
             return False
         return True
 
@@ -112,27 +112,27 @@ class IIHandler:
 
     async def _try_model_once(self, model: str, text: str) -> str | None:
         try:
-            fut = self._executor.submit(self._request, model, text)
-            resp = fut.result(timeout=self.timeout_seconds)
+            fut = await self._executor.submit(self._request, model, text)
+            resp = await fut.result(timeout=self.timeout_seconds)
             msg = resp.choices[0].message
-            content = _EXTRACT(getattr(msg, "content", None))
+            content = await _EXTRACT(getattr(msg, "content", None))
             if not content:
                 raise ValueError("empty")
             self._last_ok = model
             logger.info(f"[II] ok={model}")
-            return _format_for_html(content)
+            return await _format_for_html(content)
         except TimeoutError:
             logger.warning(f"[II] timeout={model}")
-            self._blacklist_model(model)
+            await self._blacklist_model(model)
             return None
         except Exception as e:
             logger.warning(f"[II] fail={model} err={e}")
-            self._blacklist_model(model)
+            await self._blacklist_model(model)
             return None
 
     async def answerII(self, text: str, cycles: int = 2) -> str:
         order = deque()
-        if self._last_ok and self._last_ok in self._models and not self._is_blacklisted(self._last_ok):
+        if self._last_ok and self._last_ok in self._models and not await self._is_blacklisted(self._last_ok):
             await order.append(self._last_ok)
         for m in self._models:
             if m != self._last_ok:
@@ -144,7 +144,7 @@ class IIHandler:
         for c in range(1, cycles + 1):
             logger.info(f"[II] cycle {c}/{cycles}")
             for m in allowed:
-                ans = self._try_model_once(m, text)
+                ans = await self._try_model_once(m, text)
                 if ans:
                     return ans
         return "Все модели не ответили."
