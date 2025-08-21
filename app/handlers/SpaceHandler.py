@@ -9,7 +9,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from loguru import logger
-
+import asyncio
 
 UA = (
     "InfoBot/1.0 "
@@ -18,7 +18,7 @@ UA = (
 )
 
 
-def _make_session() -> requests.Session:
+async def _make_session() -> requests.Session:
     """HTTP-сессия с ретраями и нормальным пулом соединений."""
     s = requests.Session()
     s.headers.update({"User-Agent": UA, "Accept": "application/json"})
@@ -33,8 +33,7 @@ def _make_session() -> requests.Session:
     s.mount("https://", adapter)
     return s
 
-
-HTTP = _make_session()
+HTTP = asyncio.run(_make_session())
 
 
 class SpaceHandler:
@@ -54,7 +53,7 @@ class SpaceHandler:
     _TTL_PASS = dt.timedelta(minutes=10)
 
     @staticmethod
-    def get_iss_orbital_info() -> str:
+    async def get_iss_orbital_info() -> str:
         return (
             "🛰️ <b>Международная космическая станция (МКС)</b>\n"
             "• Высота орбиты: ~408 км\n"
@@ -67,13 +66,13 @@ class SpaceHandler:
         )
 
     @staticmethod
-    def geocode_city(city: str) -> Optional[Tuple[float, float, str, Optional[str]]]:
+    async def geocode_city(city: str) -> Optional[Tuple[float, float, str, Optional[str]]]:
         """
         Возвращает (lat, lon, метка, timezone_name|None)
         """
         try:
             logger.bind(feature="space").debug(f"Geocoding city: {city!r}")
-            r = HTTP.get(SpaceHandler.GEO, params={"name": city, "count": 1, "language": "ru"}, timeout=12)
+            r = await HTTP.get(SpaceHandler.GEO, params={"name": city, "count": 1, "language": "ru"}, timeout=12)
             r.raise_for_status()
             j = r.json()
             res = j.get("results") or []
@@ -98,10 +97,10 @@ class SpaceHandler:
             return None
 
     @staticmethod
-    def _reverse_timezone(lat: float, lon: float) -> Optional[str]:
+    async def _reverse_timezone(lat: float, lon: float) -> Optional[str]:
         """Определяем таймзону по координатам (reverse)."""
         try:
-            r = HTTP.get(SpaceHandler.REV, params={"latitude": lat, "longitude": lon, "language": "ru"}, timeout=12)
+            r = await HTTP.get(SpaceHandler.REV, params={"latitude": lat, "longitude": lon, "language": "ru"}, timeout=12)
             r.raise_for_status()
             res = (r.json().get("results") or [])
             return (res[0].get("timezone") if res else None)
@@ -109,21 +108,21 @@ class SpaceHandler:
             return None
 
     @staticmethod
-    def iss_now() -> Optional[Tuple[float, float, dt.datetime]]:
+    async def iss_now() -> Optional[Tuple[float, float, dt.datetime]]:
         key = "iss_now"
         now = dt.datetime.now(dt.timezone.utc)
-        cached = SpaceHandler._cache_now.get(key)
+        cached = await SpaceHandler._cache_now.get(key)
         if cached and (now - cached[0]) < SpaceHandler._TTL_NOW:
             return cached[1]
 
-        sources = [
+        sources = await [
             (SpaceHandler.ISS_NOW, SpaceHandler._parse_open_notify_position),
             (SpaceHandler.ISS_NOW_HTTPS, SpaceHandler._parse_open_notify_position),
             (SpaceHandler.WHERETHEISS, SpaceHandler._parse_wheretheiss_position),
         ]
         for url, parser in sources:
             try:
-                r = HTTP.get(url, timeout=10)
+                r = await HTTP.get(url, timeout=10)
                 r.raise_for_status()
                 data = r.json()
                 value = parser(data)
@@ -136,7 +135,7 @@ class SpaceHandler:
         return None
 
     @staticmethod
-    def _parse_open_notify_position(data: dict) -> Optional[Tuple[float, float, dt.datetime]]:
+    async def _parse_open_notify_position(data: dict) -> Optional[Tuple[float, float, dt.datetime]]:
         pos = data.get("iss_position") or {}
         if "latitude" not in pos or "longitude" not in pos:
             return None
@@ -146,7 +145,7 @@ class SpaceHandler:
         return lat, lon, ts
 
     @staticmethod
-    def _parse_wheretheiss_position(data: dict) -> Optional[Tuple[float, float, dt.datetime]]:
+    async def _parse_wheretheiss_position(data: dict) -> Optional[Tuple[float, float, dt.datetime]]:
         if "latitude" not in data or "longitude" not in data:
             return None
         lat = float(data["latitude"])
@@ -155,10 +154,10 @@ class SpaceHandler:
         return lat, lon, ts
 
     @staticmethod
-    def get_iss_detailed_info() -> Optional[dict]:
+    async def get_iss_detailed_info() -> Optional[dict]:
         """Детальная информация из WhereTheISS (высота, скорость, освещённость)."""
         try:
-            r = HTTP.get(SpaceHandler.WHERETHEISS, timeout=10)
+            r = await HTTP.get(SpaceHandler.WHERETHEISS, timeout=10)
             r.raise_for_status()
             d = r.json()
             return {
@@ -173,21 +172,21 @@ class SpaceHandler:
             return None
 
     @staticmethod
-    def iss_passes(lat: float, lon: float, n: int = 3) -> Optional[List[Tuple[dt.datetime, int]]]:
+    async def iss_passes(lat: float, lon: float, n: int = 3) -> Optional[List[Tuple[dt.datetime, int]]]:
         if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
             logger.bind(feature="space").error(f"Invalid coords: {lat},{lon}")
             return None
 
         key = f"{round(lat,3)}|{round(lon,3)}|{int(n)}"
         now = dt.datetime.now(dt.timezone.utc)
-        cached = SpaceHandler._cache_pass.get(key)
+        cached = await SpaceHandler._cache_pass.get(key)
         if cached and (now - cached[0]) < SpaceHandler._TTL_PASS:
             return cached[1]
 
-        urls = [SpaceHandler.ISS_PASS, SpaceHandler.ISS_PASS_HTTPS]
+        urls = await [SpaceHandler.ISS_PASS, SpaceHandler.ISS_PASS_HTTPS]
         for url in urls:
             try:
-                r = HTTP.get(url, params={"lat": lat, "lon": lon, "n": int(n)}, timeout=15)
+                r = await HTTP.get(url, params={"lat": lat, "lon": lon, "n": int(n)}, timeout=15)
                 r.raise_for_status()
                 j = r.json()
                 resp = j.get("response")
@@ -203,16 +202,16 @@ class SpaceHandler:
                     except Exception:
                         continue
                 if out:
-                    SpaceHandler._cache_pass[key] = (now, out)
+                    await SpaceHandler._cache_pass[key] = (now, out)
                     return out
             except Exception as e:
                 logger.bind(feature="space").warning(f"passes fail {url}: {e}")
                 continue
 
-        return SpaceHandler._generate_fallback_passes(lat, lon, n=int(n))
+        return await SpaceHandler._generate_fallback_passes(lat, lon, n=int(n))
 
     @staticmethod
-    def _generate_fallback_passes(lat: float, lon: float, n: int = 3) -> List[Tuple[dt.datetime, int]]:
+    async def _generate_fallback_passes(lat: float, lon: float, n: int = 3) -> List[Tuple[dt.datetime, int]]:
         """Примерные пролёты, если API недоступны (чтобы бот не молчал)."""
         now = dt.datetime.now(dt.timezone.utc)
         passes: List[Tuple[dt.datetime, int]] = []
@@ -225,7 +224,7 @@ class SpaceHandler:
         return passes
 
     @staticmethod
-    def calculate_distance_to_iss(
+    async def calculate_distance_to_iss(
         user_lat: float, user_lon: float, iss_lat: float, iss_lon: float, iss_altitude: float = 408.0
     ) -> dict:
         import math
@@ -256,7 +255,7 @@ class SpaceHandler:
         }
 
     @staticmethod
-    def _fmt_local(utc_dt: dt.datetime, tz_name: Optional[str]) -> str:
+    async def _fmt_local(utc_dt: dt.datetime, tz_name: Optional[str]) -> str:
         if not tz_name:
             return ""
         try:
@@ -266,14 +265,14 @@ class SpaceHandler:
             return ""
 
     @staticmethod
-    def _fmt_dur(seconds: int) -> str:
+    async def _fmt_dur(seconds: int) -> str:
         m, s = divmod(max(0, int(seconds)), 60)
         return f"{m} мин {s} сек" if m else f"{s} сек"
 
     @staticmethod
-    def _get_country_by_coords(lat: float, lon: float) -> Optional[str]:
+    async def _get_country_by_coords(lat: float, lon: float) -> Optional[str]:
         try:
-            r = HTTP.get(SpaceHandler.REV, params={"latitude": lat, "longitude": lon, "language": "ru"}, timeout=6)
+            r = await HTTP.get(SpaceHandler.REV, params={"latitude": lat, "longitude": lon, "language": "ru"}, timeout=6)
             if r.status_code == 200:
                 res = (r.json().get("results") or [])
                 if res:
@@ -283,7 +282,7 @@ class SpaceHandler:
         return None
 
     @staticmethod
-    def format_passes(
+    async def format_passes(
         label: str,
         passes: List[Tuple[dt.datetime, int]],
         now_iss: Optional[Tuple[float, float, dt.datetime]],
@@ -291,7 +290,7 @@ class SpaceHandler:
         user_coords: Optional[Tuple[float, float]] = None,
     ) -> str:
         lines: List[str] = []
-        lines.append(SpaceHandler.get_iss_orbital_info())
+        lines.append(await SpaceHandler.get_iss_orbital_info())
         lines += [f"📍 <b>Локация: {label}</b>", "🕐 <b>Ближайшие пролёты:</b>"]
 
         if not passes:
@@ -307,9 +306,9 @@ class SpaceHandler:
                     time_emoji = "🌆"
                 else:
                     time_emoji = "🌙"
-                loc = SpaceHandler._fmt_local(rise_utc, tz_name)
+                loc = await SpaceHandler._fmt_local(rise_utc, tz_name)
                 lines.append(f"{time_emoji} {i}. {rise_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC{loc}")
-                lines.append(f"   ⏱️ Длительность: {SpaceHandler._fmt_dur(dur)}")
+                lines.append(f"   ⏱️ Длительность: {await SpaceHandler._fmt_dur(dur)}")
 
         if now_iss:
             lat, lon, ts = now_iss
@@ -345,28 +344,28 @@ class SpaceHandler:
 
         return "\n".join(lines)
 
-    def get_space_report_by_city(self, city: str) -> str:
-        geo = self.geocode_city(city)
+    async def get_space_report_by_city(self, city: str) -> str:
+        geo = await self.geocode_city(city)
         if not geo:
             return "Не нашёл такой город. Попробуйте ещё раз (пример: «Минск»)."
 
         lat, lon, label, tz = geo
-        passes = self.iss_passes(lat, lon, n=3)
+        passes = await self.iss_passes(lat, lon, n=3)
         if not passes:
             return f"⚠️ Сервис пролетов МКС временно недоступен для города «{label}». Попробуйте позже."
 
         now_iss = self.iss_now()
         return self.format_passes(label, passes, now_iss, tz, (lat, lon))
 
-    def get_space_report_by_coords(self, lat: float, lon: float) -> str:
+    async def get_space_report_by_coords(self, lat: float, lon: float) -> str:
         if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
             return "Неверные координаты: широта [-90..90], долгота [-180..180]."
 
-        tz = self._reverse_timezone(lat, lon)
+        tz = await self._reverse_timezone(lat, lon)
         label = f"{lat:.4f}, {lon:.4f}"
         passes = self.iss_passes(lat, lon, n=3)
         if not passes:
             return f"⚠️ Сервис пролетов МКС временно недоступен для координат {label}. Попробуйте позже."
 
-        now_iss = self.iss_now()
-        return self.format_passes(label, passes, now_iss, tz, (lat, lon))
+        now_iss = await self.iss_now()
+        return await self.format_passes(label, passes, now_iss, tz, (lat, lon))

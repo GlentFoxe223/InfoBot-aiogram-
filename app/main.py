@@ -127,9 +127,9 @@ async def register_next_step_logged(bot: Bot, msg: types.Message, handler: Calla
     logger.bind(feature="tg").debug(
         f"register_next_step(chat_id={msg.chat.id}, wait_mid={msg.message_id}, handler={handler.__name__})"
     )
-    await bot.fsm(msg, handler)
+    await fsm(msg, handler)
 
-def _resolve_image_path(image_name: str) -> Optional[Path]:
+async def _resolve_image_path(image_name: str) -> Optional[Path]:
     candidates = [
         application_path / "static" / "images" / image_name,
         application_path / "app" / "static" / "images" / image_name,
@@ -368,7 +368,7 @@ class BotCore:
         weather = WeatherHandler().get_weather(city)
         log_action("weather_received", feature="weather", keys=list(weather.keys()))
         image_name = weather.get("image", "error.png")
-        image_path = _resolve_image_path(image_name)
+        image_path = await _resolve_image_path(image_name)
         if image_path:
             try:
                 with open(image_path, "rb") as f:

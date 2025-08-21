@@ -27,7 +27,7 @@ _PRIORITY: Tuple[str, ...] = (
 _BLOCK_RE = re.compile(r"```([a-zA-Z0-9_+\-]*)\s*\n(.*?)```", re.DOTALL)
 _INLINE_RE = re.compile(r"`([^`\n]+)`")
 
-def _collect_model_ids() -> Tuple[str, ...]:
+async def _collect_model_ids() -> Tuple[str, ...]:
     out: List[str] = []
     for name in dir(g4f_models):
         if name.startswith("_"):
@@ -48,19 +48,19 @@ def _collect_model_ids() -> Tuple[str, ...]:
             result.append(mid); seen.add(mid)
     return tuple(result)
 
-def _format_for_html(text: str) -> str:
+async def _format_for_html(text: str) -> str:
     placeholders: List[str] = []
 
-    def _put(fragment: str) -> str:
+    async def _put(fragment: str) -> str:
         idx = len(placeholders)
         placeholders.append(fragment)
         return f"@@BLOCK{idx}@@"
 
-    def repl_block(m: re.Match) -> str:
+    async def repl_block(m: re.Match) -> str:
         code = m.group(2) or ""
         return _put(f"<pre><code>{html.escape(code)}</code></pre>")
 
-    def repl_inline(m: re.Match) -> str:
+    async def repl_inline(m: re.Match) -> str:
         code = m.group(1) or ""
         return _put(f"<code>{html.escape(code)}</code>")
 
@@ -72,9 +72,9 @@ def _format_for_html(text: str) -> str:
     return s
 
 class IIHandler:
-    def __init__(self, limit_per_run: int = 15, blacklist_minutes: int = 10, timeout_seconds: int = 20):
+    async def __init__(self, limit_per_run: int = 15, blacklist_minutes: int = 10, timeout_seconds: int = 20):
         self.client = Client()
-        self._models: Tuple[str, ...] = _collect_model_ids() or _PRIORITY
+        self._models: Tuple[str, ...] = await _collect_model_ids() or _PRIORITY
         self._last_ok: str | None = None
         self._blacklist: dict[str, datetime] = {}
         self.limit_per_run = int(limit_per_run)
@@ -83,7 +83,7 @@ class IIHandler:
         self._executor = ThreadPoolExecutor(max_workers=2)
         logger.info(f"[II] models={self._models}")
 
-    def _is_blacklisted(self, model: str) -> bool:
+    async def _is_blacklisted(self, model: str) -> bool:
         until = self._blacklist.get(model)
         if not until:
             return False
@@ -92,10 +92,10 @@ class IIHandler:
             return False
         return True
 
-    def _blacklist_model(self, model: str) -> None:
+    async def _blacklist_model(self, model: str) -> None:
         self._blacklist[model] = datetime.utcnow() + timedelta(minutes=self.blacklist_minutes)
 
-    def _request(self, model: str, text: str):
+    async def _request(self, model: str, text: str):
         try:
             return self.client.chat.completions.create(
                 model=model,
@@ -110,7 +110,7 @@ class IIHandler:
                 temperature=0.6,
             )
 
-    def _try_model_once(self, model: str, text: str) -> str | None:
+    async def _try_model_once(self, model: str, text: str) -> str | None:
         try:
             fut = self._executor.submit(self._request, model, text)
             resp = fut.result(timeout=self.timeout_seconds)
@@ -130,13 +130,13 @@ class IIHandler:
             self._blacklist_model(model)
             return None
 
-    def answerII(self, text: str, cycles: int = 2) -> str:
+    async def answerII(self, text: str, cycles: int = 2) -> str:
         order = deque()
         if self._last_ok and self._last_ok in self._models and not self._is_blacklisted(self._last_ok):
-            order.append(self._last_ok)
+            await order.append(self._last_ok)
         for m in self._models:
             if m != self._last_ok:
-                order.append(m)
+                await order.append(m)
         allowed = [m for m in order if not self._is_blacklisted(m)]
         if not allowed:
             return "Все модели не ответили."
@@ -149,5 +149,5 @@ class IIHandler:
                     return ans
         return "Все модели не ответили."
 
-    def get_answer(self, text: str) -> str:
-        return self.answerII(text)
+    async def get_answer(self, text: str) -> str:
+        return await self.answerII(text)
