@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional
 from dotenv import load_dotenv
 from loguru import logger
 from aiogram.filters.command import Command
+from aiogram.filters import CommandStart
 from aiogram import Bot, Dispatcher, types, F
 from aiogram import fsm
 import asyncio
@@ -102,7 +103,7 @@ def _short(x: Any, maxlen: int = 240) -> str:
     s = repr(x)
     return s if len(s) <= maxlen else s[:maxlen] + "…"
 
-def log_msg(prefix: str, m: types.Message, *, feature: str = "tg"):
+async def log_msg(prefix: str, m: types.Message, *, feature: str = "tg"):
     fu = getattr(m, "from_user", None)
     ch = getattr(m, "chat", None)
     logger.bind(feature=feature).info(
@@ -111,16 +112,16 @@ def log_msg(prefix: str, m: types.Message, *, feature: str = "tg"):
         f"type={m.content_type} text={_short((m.text or '').strip())}"
     )
 
-async def send_message_logged(bot: Bot, chat_id: int, text: str, **kw) -> types.Message:
-    logger.bind(feature="tg").debug(f"send_message(chat_id={chat_id}, len={len(text)}, keys={list(kw.keys())})")
-    msg = await bot.send_message(chat_id, text, **kw)
-    logger.bind(feature="tg").info(f"sent_message: chat_id={chat_id} mid={msg.message_id}")
+async def send_message_logged(bot: Bot, message: types.Message, text: str, **kw) -> types.Message:
+    logger.bind(feature="tg").debug(f"send_message(chat_id={message}, len={len(text)}, keys={list(kw.keys())})")
+    msg = await message.answer(text, **kw)
+    logger.bind(feature="tg").info(f"sent_message: chat_id={message} mid={msg.message_id}")
     return msg
 
-async def send_photo_logged(bot: Bot, chat_id: int, **kw) -> types.Message:
-    logger.bind(feature="tg").debug(f"send_photo(chat_id={chat_id}, keys={list(kw.keys())})")
-    msg = await bot.send_photo(chat_id, **kw)
-    logger.bind(feature="tg").info(f"sent_photo: chat_id={chat_id} mid={msg.message_id}")
+async def send_photo_logged(bot: Bot, message: types.Message, **kw) -> types.Message:
+    logger.bind(feature="tg").debug(f"send_photo(chat_id={message}, keys={list(kw.keys())})")
+    msg = await message.answer_photo(**kw)
+    logger.bind(feature="tg").info(f"sent_photo: chat_id={message} mid={msg.message_id}")
     return msg
 
 async def register_next_step_logged(bot: Bot, msg: types.Message, handler: Callable):
@@ -146,20 +147,6 @@ async def _resolve_image_path(image_name: str) -> Optional[Path]:
 
 bot = Bot(token=BOT_TOKEN)
 dp=Dispatcher()
-
-async def _del_web():
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        log_action("Webhook deleted (drop_pending_updates=True)", feature="tg")
-    except Exception as e:
-        log_action(f"delete_webhook failed: {e}; try remove_webhook()", feature="tg")
-        try:
-            bot.remove_webhook()
-            log_action("remove_webhook OK", feature="tg")
-        except Exception as e2:
-            logger.bind(feature="errors").exception(f"remove_webhook FAIL: {e2}")
-
-asyncio.run(_del_web())
 
 sys.path.insert(0, str(application_path))
 sys.path.insert(0, str(application_path / "app"))
@@ -236,26 +223,26 @@ class BotCore:
             if txt == "ИИ помощник":
                 return self._go_ii(message)
             if txt == "Назад":
-                await send_message_logged(bot, message.chat.id, "Возвращаемся в главное меню:", reply_markup=self.main_kb)
+                await send_message_logged(bot, message, "Возвращаемся в главное меню:", reply_markup=self.main_kb)
                 return True
         return False
 
     @trace(feature="weather")
-    async def _go_weather(self, message:types.Message) -> bool:
+    async def _go_weather(self, message: types.Message) -> bool:
         log_msg("go_weather", message)
-        msg = await send_message_logged(bot, message.chat.id, "Введите город:", reply_markup=self.remove_kb)
+        msg = await send_message_logged(bot, message, "Введите город:", reply_markup=self.remove_kb)
         await register_next_step_logged(bot, msg, self.process_weather)
         return True
 
     @trace(feature="space")
-    async def _go_space(self, message) -> bool:
+    async def _go_space(self, message: types.Message) -> bool:
         log_msg("go_space", message)
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(types.KeyboardButton("Отправить локацию", request_location=True))
         kb.add(types.KeyboardButton("Назад"))
         msg = await send_message_logged(
             bot,
-            message.chat.id,
+            message,
             "Космос 🚀\nПришлите город текстом или нажмите «Отправить локацию».",
             reply_markup=kb
         )
@@ -263,7 +250,7 @@ class BotCore:
         return True
 
     @trace(feature="news")
-    async def _go_news(self, message) -> bool:
+    async def _go_news(self, message: types.Message) -> bool:
         log_msg("go_news", message)
         user_id = message.from_user.id
         parser = NewsHandler()
@@ -286,30 +273,30 @@ class BotCore:
 
     @trace(feature="core")
     async def register_handlers(self):
-        @dp.message(Command(commands=["start"]))
-        async def cmd_start(message):
+        @dp.message(CommandStart())
+        async def cmd_start(message: types.Message):
             log_msg("/start", message)
             self.db.add_user(message.from_user.id, message.from_user.username)
             log_action("user added", feature="core", uid=message.from_user.id, uname=message.from_user.username)
             await send_message_logged(bot, message.chat.id, "Привет! Выберите действие:", reply_markup=self.main_kb)
 
         @dp.message(F.text == "Погода")
-        async def cmd_weather(message):
+        async def cmd_weather(message: types.Message):
             log_msg("btn:Погода", message)
             await self._go_weather(message)
 
         @dp.message(F.text == "Космос")
-        async def cmd_space(message):
+        async def cmd_space(message: types.Message):
             log_msg("btn:Космос", message)
             await self._go_space(message)
 
         @dp.message(F.text == "Новости")
-        async def cmd_news(message):
+        async def cmd_news(message: types.Message):
             log_msg("btn:Новости", message)
             await self._go_news(message)
 
         @dp.message(F.text == "Далее" or "Назад")
-        async def news_navigation(message):
+        async def news_navigation(message: types.Message):
             log_msg("news_nav", message)
             user_id = message.from_user.id
             if user_id not in self.user_pages:
@@ -331,12 +318,12 @@ class BotCore:
                 await send_message_logged(bot, message.chat.id, "Возвращаемся в главное меню:", reply_markup=self.main_kb)
 
         @dp.message(F.text == "ИИ помощник")
-        async def cmd_ii(message):
+        async def cmd_ii(message: types.Message):
             log_msg("btn:ИИ", message)
             await self._go_ii(message)
 
         @dp.message(F.location)
-        async def handle_location(message):
+        async def handle_location(message: types.Message):
             log_msg("location", message)
             await self.process_space_location(message)
 
@@ -357,7 +344,7 @@ class BotCore:
                 logger.bind(feature="errors").exception(f"Article callback error: {e}")
 
     @trace(feature="weather")
-    async def process_weather(self, message):
+    async def process_weather(self, message: types.Message):
         log_msg("process_weather", message)
         if self.route_if_menu(message):
             return
@@ -446,7 +433,7 @@ class BotCore:
                         await player.delete(video_path)
 
     @trace(feature="space")
-    async def process_space_city(self, message):
+    async def process_space_city(self, message: types.Message):
         log_msg("process_space_city", message)
         if getattr(message, "location", None):
             return self.process_space_location(message)
@@ -475,7 +462,7 @@ class BotCore:
         await send_message_logged(bot, message.chat.id, report, reply_markup=self.main_kb)
 
     @trace(feature="ii")
-    async def process_II(self, message):
+    async def process_II(self, message: types.Message):
         log_msg("process_II", message)
         if self.route_if_menu(message):
             return
@@ -491,6 +478,16 @@ class BotCore:
 
     @trace(feature="core")
     async def run(self):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            log_action("Webhook deleted (drop_pending_updates=True)", feature="tg")
+        except Exception as e:
+            log_action(f"delete_webhook failed: {e}; try remove_webhook()", feature="tg")
+            try:
+                bot.remove_webhook()
+                log_action("remove_webhook OK", feature="tg")
+            except Exception as e2:
+                logger.bind(feature="errors").exception(f"remove_webhook FAIL: {e2}")
         await self.register_handlers()
         await dp.start_polling(bot)
 
